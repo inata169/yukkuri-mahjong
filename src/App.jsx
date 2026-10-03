@@ -12,7 +12,7 @@ import {
 import { Session, DEFAULT_SETTINGS, M } from "./game/engine.js";
 import { advice } from "./game/advice.js";
 import { tileName, handTiles } from "./game/tiles.js";
-import Table, { PlayerDetail } from "./components/Table.jsx";
+import Table, { PlayerDetail, Melds } from "./components/Table.jsx";
 import Hand from "./components/Hand.jsx";
 import Learning from "./components/Learning.jsx";
 import Modal from "./components/Modal.jsx";
@@ -49,6 +49,8 @@ export default function App() {
     [modal, setModal] = useState(null),
     [notice, setNotice] = useState(ref.current.notice),
     [copied, setCopied] = useState(false),
+    [copyError, setCopyError] = useState(false),
+    [copying, setCopying] = useState(false),
     [preset, setPreset] = useState("normal"),
     [length, setLength] = useState(session.settings.length);
   const saveError = useRef(false),
@@ -141,13 +143,22 @@ export default function App() {
     refresh();
   }
   async function copy() {
+    setCopyError(false);
+    setCopying(true);
+    let timer;
     try {
-      await navigator.clipboard.writeText(session.prompt());
+      await Promise.race([
+        navigator.clipboard.writeText(session.prompt()),
+        new Promise((_, reject) => {
+          timer = setTimeout(() => reject(new Error("Clipboard timeout")), 3000);
+        }),
+      ]);
       setCopied(true);
     } catch {
-      setNotice(
-        "コピーできない場合は、相談文を長押しして選択・コピーしてください。",
-      );
+      setCopyError(true);
+    } finally {
+      clearTimeout(timer);
+      setCopying(false);
     }
   }
   function download() {
@@ -164,7 +175,9 @@ export default function App() {
     if (!file) return;
     try {
       if (file.size > 4000000) throw new Error("ファイルが大きすぎます");
-      ref.current.session = Session.load(await file.text());
+      const loaded = Session.load(await file.text());
+      ref.current.session = loaded;
+      setLength(loaded.settings.length);
       setMode("manual");
       setPaused(true);
       setModal(null);
@@ -266,6 +279,7 @@ export default function App() {
                       ),
                     )}
                   </div>
+                  <Melds hand={M.Shoupai.fromString(end.hule.shoupai)} />
                   <p className="win-score">
                     {end.hule.damanguan
                       ? `${end.hule.damanguan}倍役満`
@@ -378,6 +392,7 @@ export default function App() {
           }}
           onPrompt={() => {
             setCopied(false);
+            setCopyError(false);
             setModal({ type: "prompt" });
           }}
           onWhy={() => setModal({ type: "why" })}
@@ -413,7 +428,7 @@ export default function App() {
           <a
             href={
               globalThis.__MAHJONG_NOTICE ||
-              `${import.meta.env.BASE_URL}licenses/NOTICE.txt`
+              `${import.meta.env.BASE_URL}licenses/index.html`
             }
             download={globalThis.__MAHJONG_NOTICE ? "LICENSES.txt" : undefined}
             target="_blank"
@@ -471,10 +486,16 @@ export default function App() {
                 aria-label="AIへの相談文"
                 onFocus={(e) => e.target.select()}
               />
-              <button className="button primary full" onClick={copy}>
+              <button className="button primary full" onClick={copy} disabled={copying}>
                 {copied ? <Check size={18} /> : <Copy size={18} />}{" "}
-                {copied ? "コピーしました" : "相談文をコピー"}
+                {copying ? "コピーしています…" : copied ? "コピーしました" : "相談文をコピー"}
               </button>
+              {copyError ? (
+                <p role="status">
+                  コピーできませんでした。相談文を押して選択し、コピーしてください。
+                  PCではCtrl+C（Macでは⌘C）でもコピーできます。
+                </p>
+              ) : null}
             </>
           ) : null}
           {modal.type === "wall" ? (

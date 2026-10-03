@@ -109,3 +109,46 @@ test("invalid manual actions are rejected instead of silently discarding a diffe
     s.step({ kind: "discard", reply: { dapai: "not-a-tile" } }),
   );
 });
+
+test("undo and replay retain the currently selected CPU level", () => {
+  const s = new Session({ level: 2 });
+  s.step();
+  s.updateSettings({ level: 5 });
+  assert.ok(s.undo());
+  assert.equal(s.settings.level, 5);
+  assert.deepEqual(s.game._players.slice(1).map((p) => p.level), [5, 5, 5]);
+  s.replay();
+  assert.deepEqual(s.game._players.slice(1).map((p) => p.level), [5, 5, 5]);
+});
+
+test("loading rejects corrupted scores, replay state, settings and reviews", () => {
+  const saved = new Session().save();
+  const corruptions = [
+    (s) => { s.game._model.defen = null; },
+    (s) => { s.game._players[0]._model.shoupai = []; },
+    (s) => { s.initial = {}; },
+    (s) => { s.settings.speed = -1; },
+    (s) => { s.settings.level = 99; },
+    (s) => { s.reviews = {}; },
+    (s) => { s.game._status = "unknown"; },
+    (s) => { s.game._model.player_id = [0, 0, 0, 0]; },
+  ];
+  for (const corrupt of corruptions) {
+    const value = JSON.parse(saved);
+    corrupt(value);
+    assert.throws(() => Session.load(JSON.stringify(value)), /保存/);
+  }
+  assert.equal(Session.load(saved).save(), saved);
+});
+
+test("a saved half match retains rules and can resume and replay", () => {
+  const s = new Session({ length: 2, level: 4, speed: 250 });
+  s.step(s.actions().find((a) => a.kind === "discard"));
+  const loaded = Session.load(s.save());
+  assert.equal(loaded.settings.length, 2);
+  assert.equal(loaded.game._rule["場数"], 2);
+  assert.equal(loaded.reviews.length, 1);
+  loaded.step();
+  loaded.replay();
+  assert.equal(loaded.actions().filter((a) => a.kind === "discard").length > 0, true);
+});

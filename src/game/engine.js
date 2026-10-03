@@ -245,6 +245,67 @@ function decode(value) {
   return obj;
 }
 
+// A save is user-supplied input. Validate both the live state and replay state
+// before replacing the current match, including the boards used by the CPU.
+function validateGame(game) {
+  const four = (a, valid) =>
+    Array.isArray(a) && a.length === 4 && a.every(valid);
+  const integer = (n, min, max) =>
+    Number.isInteger(n) && n >= min && n <= max;
+  const tile = (p) => typeof p === "string" && !!M.Shoupai.valid_pai(p);
+  const board = (m) => {
+    if (
+      !m ||
+      !four(m.player, (p) => typeof p === "string") ||
+      !four(m.defen, Number.isFinite) ||
+      !four(m.player_id, (id) => integer(id, 0, 3)) ||
+      new Set(m.player_id).size !== 4 ||
+      !integer(m.lunban, -1, 3) ||
+      !integer(m.zhuangfeng, 0, 3) ||
+      !integer(m.jushu, 0, 15) ||
+      !integer(m.changbang, 0, 10000) ||
+      !integer(m.lizhibang, 0, 10000) ||
+      !four(m.shoupai, (h) =>
+        h instanceof M.Shoupai &&
+        ["m", "p", "s", "z"].every((s) =>
+          Array.isArray(h._bingpai?.[s]) &&
+          h._bingpai[s].length === (s === "z" ? 8 : 10) &&
+          h._bingpai[s].every((n) => integer(n, 0, 4)),
+        ) &&
+        Array.isArray(h._fulou) &&
+        h._fulou.every((meld) => typeof meld === "string" && M.Shoupai.valid_mianzi(meld)),
+      ) ||
+      !four(m.he, (h) => h instanceof M.He && Array.isArray(h._pai) &&
+        h._pai.every(tile) && h._find && typeof h._find === "object") ||
+      !m.shan || !integer(m.shan.paishu, 0, 122) ||
+      !Array.isArray(m.shan.baopai) || !m.shan.baopai.every(tile)
+    ) throw new Error("保存データが不完全です");
+  };
+  if (
+    !(game instanceof TrainingGame) ||
+    !["qipai", "zimo", "dapai", "fulou", "gang", "gangzimo", "hule", "pingju", "jieju"].includes(game._status) ||
+    !Array.isArray(game._reply) || !Array.isArray(game._paipu?.log) ||
+    !game._rule || typeof game._rule !== "object" ||
+    !four(game._players, (p) => p instanceof TrainingPlayer &&
+      p.model instanceof M.Board && integer(p._menfeng, 0, 3))
+  ) throw new Error("保存データが不完全です");
+  board(game.model);
+  for (const player of game._players) board(player.model);
+  if (!(game.model.shan instanceof M.Shan) ||
+      !Array.isArray(game.model.shan._pai) || !game.model.shan._pai.every(tile))
+    throw new Error("山の保存データが不完全です");
+  if (game._status === "hule") {
+    const h = game._event?.hule;
+    if (!h || typeof h.shoupai !== "string" || !Number.isFinite(h.defen) ||
+        !integer(h.l, 0, 3) || !four(h.fenpei, Number.isFinite) ||
+        !Array.isArray(h.hupai) || !h.hupai.every((x) => typeof x.name === "string"))
+      throw new Error("和了の保存データが不完全です");
+  }
+  if (game._status === "pingju" &&
+      (!game._event?.pingju || !four(game._event.pingju.fenpei, Number.isFinite)))
+    throw new Error("流局の保存データが不完全です");
+}
+
 export class Session {
   constructor(settings = { ...DEFAULT_SETTINGS }, preset = "normal") {
     this.settings = { ...DEFAULT_SETTINGS, ...settings };
@@ -276,6 +337,7 @@ export class Session {
     this.game = decode(snapshot);
     this.game._callback = EMPTY;
     this.game._sync = true;
+    this.updateSettings({});
   }
   save() {
     return JSON.stringify({
@@ -293,16 +355,35 @@ export class Session {
       throw new Error("保存形式が異なります");
     const session = Object.create(Session.prototype);
     session.settings = { ...DEFAULT_SETTINGS, ...s.settings };
+    if (
+      ![1, 2, 3, 4, 5].includes(session.settings.level) ||
+      !["ask", "always", "off"].includes(session.settings.hints) ||
+      ![250, 850, 1500].includes(session.settings.speed) ||
+      ![1, 2].includes(session.settings.length) ||
+      typeof session.settings.reveal !== "boolean" ||
+      typeof session.settings.wall !== "boolean"
+    ) throw new Error("保存された設定が不正です");
     session.history = [];
     session.reviews = s.reviews || [];
     session.assisted = !!s.assisted;
     session.initial = s.initial;
-    session.restore(s.game);
-    if (
-      session.game.model.shoupai.length !== 4 ||
-      session.game._players.length !== 4
-    )
-      throw new Error("保存データが不完全です");
+    try {
+      validateGame(decode(s.game));
+      const initial = decode(s.initial);
+      validateGame(initial);
+      if (initial._status !== "qipai" || !Array.isArray(session.reviews) ||
+          !session.reviews.every((r) => r && typeof r.pick === "string" &&
+            M.Shoupai.valid_pai(r.pick) && typeof r.best === "string" &&
+            M.Shoupai.valid_pai(r.best) && Number.isFinite(r.shanten)))
+        throw new Error("保存データが不完全です");
+      session.restore(s.game);
+      session.actions();
+      session.status();
+      session.prompt();
+      candidates(session.me);
+    } catch {
+      throw new Error("保存データが不完全です。元の対局ファイルを選んでください。");
+    }
     return session;
   }
   updateSettings(settings) {
