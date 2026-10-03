@@ -1,0 +1,26 @@
+ゆっくり麻雀 0.1.0 — Third-party notices
+
+Mahjong rules engine:
+  @kobalab/majiang-core 1.4.1
+  Copyright (c) Satoshi Kobayashi, MIT
+  https://github.com/kobalab/majiang-core
+  See majiang-core-MIT.txt
+
+Tile artwork:
+  FluffyStuff / riichi-mahjong-tiles
+  CC0 / Public domain
+  https://github.com/FluffyStuff/riichi-mahjong-tiles
+  Source commit: 26e127ba2117f45cdce5ea0225748cc0cfad3169
+  Back.svg recolored gold to match the application design.
+  See tiles-CC0.txt
+
+Japanese font:
+  Noto Sans JP, distributed through @fontsource/noto-sans-jp 5.3.0
+  SIL Open Font License 1.1
+  See NotoSansJP-OFL.txt
+
+Interface:
+  React / React DOM — MIT, see React-MIT.txt
+  Lucide — ISC, see Lucide-ISC.txt
+
+This application's original code is MIT licensed; see application-MIT.txt.

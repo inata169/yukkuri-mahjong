@@ -1,0 +1,22 @@
+{
+  "name": "yukkuri-mahjong",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host 0.0.0.0",
+    "build": "vite build",
+    "preview": "vite preview --host 0.0.0.0",
+    "test": "node --test --test-isolation=none test/*.test.js"
+  },
+  "dependencies": {
+    "@kobalab/majiang-core": "1.4.1",
+    "lucide-react": "1.51.0",
+    "react": "19.3.0",
+    "react-dom": "19.3.0"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "6.1.1",
+    "vite": "8.3.2"
+  }
+}
