@@ -155,7 +155,7 @@ test("a saved half match retains rules and can resume and replay", () => {
 
 // A fixed wall makes the level 1 / level 5 decision regression reproducible.
 function pendingCpuSession() {
-  const s = new Session({ level: 1 });
+  const s = new Session({ level: 1, cpu: "legacy" }, "normal", { seed: 12345 });
   const wall = new M.Shan(s.game._rule);
   wall._pai.sort();
   let seed = 12345;
@@ -203,7 +203,8 @@ test("level changes update the pending CPU move, including undo and older saves"
 });
 
 test("level changes preserve boards, manual replies and pending wins through a match", () => {
-  const s = pendingCpuSession();
+  // Fix every round's wall so this regression always exercises a CPU win.
+  const s = new Session({ cpu: "legacy", level: 1 }, "normal", { seed: 1 });
   let steps = 0, wins = 0;
   while (!s.finished && steps++ < 4000) {
     const before = s.snapshot();

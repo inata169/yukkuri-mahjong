@@ -1,4 +1,5 @@
 import { LEVELS, PRESETS } from "../game/engine.js";
+import { CPU_TYPES } from "../game/strategy.js";
 export default function Settings({
   settings,
   onChange,
@@ -11,6 +12,13 @@ export default function Settings({
 }) {
   return (
     <div className="settings">
+      <label>
+        CPUの種類
+        <select value={settings.cpu} onChange={(e) => onChange({ cpu: e.target.value })}>
+          {Object.entries(CPU_TYPES).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+        </select>
+      </label>
+      <p className="muted">改善版はレベル3から鳴きを比較し、4・5ではスジ・壁・相手の鳴きも守備の目安にします。相手3人と自動操作に反映します。ヒントは従来の基準です。</p>
       <label>
         ヒントの出し方
         <select
@@ -38,7 +46,7 @@ export default function Settings({
         </div>
         <p>{LEVELS[settings.level - 1]}</p>
         <small>
-          次の判断から反映します。レベル5はリーチへの守りも考えます。対戦段位を示すものではありません。
+          次の判断から反映します。自分の席の自動操作はレベル5です。対戦段位を示すものではありません。
         </small>
       </fieldset>
       <label>

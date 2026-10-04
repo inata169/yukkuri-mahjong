@@ -1518,3 +1518,14 @@ select {
 .opponent-hand .tile {
   border: 0;
 }
+/* CPU comparison runs off the UI thread so Stop stays responsive. */
+.comparison-controls { display: grid; gap: 14px; border: 1px solid #d5dedf; border-radius: 10px; padding: 16px; }
+.comparison-controls label { display: grid; gap: 6px; }
+.comparison-controls input, .comparison-controls select { min-width: 0; width: 100%; padding: 9px; border: 1px solid #cbd5e1; border-radius: 6px; font: inherit; background: white; color: #153044; }
+.comparison-buttons { display: flex; gap: 10px; margin-top: 18px; }
+.comparison > p { margin: 12px 0; line-height: 1.7; }
+.comparison-table { width: 100%; border-collapse: collapse; margin: 18px 0; font-variant-numeric: tabular-nums; }
+.comparison-table caption { text-align: left; font-weight: 700; margin-bottom: 10px; }
+.comparison-table th, .comparison-table td { text-align: right; padding: 10px 5px; border-bottom: 1px solid #d5dedf; }
+.comparison-table th:first-child { text-align: left; }
+.comparison-table thead { background: #edf5f2; }
