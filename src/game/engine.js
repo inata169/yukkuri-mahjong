@@ -267,6 +267,7 @@ function validateGame(game) {
       !integer(m.lizhibang, 0, 10000) ||
       !four(m.shoupai, (h) =>
         h instanceof M.Shoupai &&
+        integer(h._bingpai?._, 0, 14) &&
         ["m", "p", "s", "z"].every((s) =>
           Array.isArray(h._bingpai?.[s]) &&
           h._bingpai[s].length === (s === "z" ? 8 : 10) &&
@@ -388,8 +389,29 @@ export class Session {
   }
   updateSettings(settings) {
     this.settings = { ...this.settings, ...settings };
-    for (let id = 1; id < 4; id++)
-      this.game._players[id].level = this.settings.level;
+    const g = this.game;
+    for (let id = 1; id < 4; id++) {
+      const player = g._players[id];
+      if (player.level === this.settings.level) continue;
+      player.level = this.settings.level;
+      // Replies are already queued when a snapshot is taken. Reconsider only
+      // decisions, never replay the event that updated the player's board.
+      // Keep wins: Player.dapai marks temporary furiten after choosing a reply.
+      if (g._reply[id]?.hule) continue;
+      const callback = player._callback;
+      player._callback = (reply) => { g._reply[id] = reply || {}; };
+      try {
+        const l = g.model.lunban;
+        if (g._status === "zimo" || g._status === "gangzimo")
+          player.action_zimo({ l }, g._status === "gangzimo");
+        else if (g._status === "dapai")
+          player.action_dapai({ l, p: g._dapai });
+        else if (g._status === "fulou")
+          player.action_fulou(g._event.fulou);
+      } finally {
+        player._callback = callback;
+      }
+    }
   }
   actions() {
     const g = this.game,

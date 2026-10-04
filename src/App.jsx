@@ -143,6 +143,7 @@ export default function App() {
     refresh();
   }
   async function copy() {
+    setCopied(false);
     setCopyError(false);
     setCopying(true);
     let timer;
