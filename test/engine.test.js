@@ -240,3 +240,49 @@ test("loading rejects unbounded concealed-tile counts in all saved boards", () =
   }
   assert.equal(Session.load(saved).save(), saved);
 });
+
+
+test("loading rejects more than four melds in every live and replay board", () => {
+  const saved = new Session().save();
+  for (const key of ["game", "initial"]) {
+    for (let board = -1; board < 4; board++) {
+      const data = JSON.parse(saved);
+      const model = board === -1 ? data[key]._model : data[key]._players[board]._model;
+      model.shoupai[1]._fulou = Array(5).fill("m111+");
+      assert.throws(() => Session.load(JSON.stringify(data)), /保存/);
+    }
+  }
+});
+
+test("loading bounds collections rendered by the table and review dialog", () => {
+  const saved = new Session().save();
+  const corruptions = [
+    (s) => { s.game._model.he[1]._pai = Array(137).fill("m1"); },
+    (s) => { s.initial._players[2]._model.he[1]._pai = Array(137).fill("m1"); },
+    (s) => { s.game._model.shan._baopai = Array(6).fill("m1"); },
+    (s) => { s.initial._players[2]._model.shan.baopai = Array(6).fill("m1"); },
+    (s) => { s.reviews = Array(61).fill({ pick: "m1", best: "m1", shanten: 1 }); },
+  ];
+  for (const corrupt of corruptions) {
+    const data = JSON.parse(saved);
+    corrupt(data);
+    assert.throws(() => Session.load(JSON.stringify(data)), /保存/);
+  }
+  assert.equal(Session.load(saved).save(), saved);
+});
+
+test("loading bounds the separate winning hand and yaku display", () => {
+  const data = JSON.parse(new Session().save());
+  data.game._status = "hule";
+  data.game._event = { hule: {
+    l: 0, shoupai: "z11,m123-,p123-,s123-,z555+", defen: 1000,
+    fenpei: [1000, -1000, 0, 0], hupai: [{ name: "役牌 白", fanshu: 1 }],
+  } };
+  const saved = JSON.stringify(data);
+  assert.equal(Session.load(saved).game._event.hule.shoupai, data.game._event.hule.shoupai);
+  data.game._event.hule.shoupai += ",m111+";
+  assert.throws(() => Session.load(JSON.stringify(data)), /保存/);
+  const oversized = JSON.parse(saved);
+  oversized.game._event.hule.hupai = Array(65).fill({ name: "役牌 白", fanshu: 1 });
+  assert.throws(() => Session.load(JSON.stringify(oversized)), /保存/);
+});

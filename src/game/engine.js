@@ -273,13 +273,13 @@ function validateGame(game) {
           h._bingpai[s].length === (s === "z" ? 8 : 10) &&
           h._bingpai[s].every((n) => integer(n, 0, 4)),
         ) &&
-        Array.isArray(h._fulou) &&
-        h._fulou.every((meld) => typeof meld === "string" && M.Shoupai.valid_mianzi(meld)),
+        Array.isArray(h._fulou) && h._fulou.length <= 4 &&
+        h._fulou.every((meld) => typeof meld === "string" && meld.length <= 6 && M.Shoupai.valid_mianzi(meld)),
       ) ||
-      !four(m.he, (h) => h instanceof M.He && Array.isArray(h._pai) &&
+      !four(m.he, (h) => h instanceof M.He && Array.isArray(h._pai) && h._pai.length <= 136 &&
         h._pai.every(tile) && h._find && typeof h._find === "object") ||
       !m.shan || !integer(m.shan.paishu, 0, 122) ||
-      !Array.isArray(m.shan.baopai) || !m.shan.baopai.every(tile)
+      !Array.isArray(m.shan.baopai) || m.shan.baopai.length > 5 || !m.shan.baopai.every(tile)
     ) throw new Error("保存データが不完全です");
   };
   if (
@@ -295,11 +295,12 @@ function validateGame(game) {
   if (!(game.model.shan instanceof M.Shan) ||
       !Array.isArray(game.model.shan._pai) || !game.model.shan._pai.every(tile))
     throw new Error("山の保存データが不完全です");
-  if (game._status === "hule") {
+  if (game._status === "hule" || game._event?.hule) {
     const h = game._event?.hule;
-    if (!h || typeof h.shoupai !== "string" || !Number.isFinite(h.defen) ||
+    if (!h || typeof h.shoupai !== "string" || h.shoupai.length > 64 ||
+        h.shoupai.split(",").length > 5 || !Number.isFinite(h.defen) ||
         !integer(h.l, 0, 3) || !four(h.fenpei, Number.isFinite) ||
-        !Array.isArray(h.hupai) || !h.hupai.every((x) => typeof x.name === "string"))
+        !Array.isArray(h.hupai) || h.hupai.length > 64 || !h.hupai.every((x) => typeof x.name === "string"))
       throw new Error("和了の保存データが不完全です");
   }
   if (game._status === "pingju" &&
@@ -373,6 +374,7 @@ export class Session {
       const initial = decode(s.initial);
       validateGame(initial);
       if (initial._status !== "qipai" || !Array.isArray(session.reviews) ||
+          session.reviews.length > 60 ||
           !session.reviews.every((r) => r && typeof r.pick === "string" &&
             M.Shoupai.valid_pai(r.pick) && typeof r.best === "string" &&
             M.Shoupai.valid_pai(r.best) && Number.isFinite(r.shanten)))
