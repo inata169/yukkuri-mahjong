@@ -245,6 +245,72 @@ function decode(value) {
   return obj;
 }
 
+// A save is user-supplied input. Validate both the live state and replay state
+// before replacing the current match, including the boards used by the CPU.
+function validateGame(game) {
+  const four = (a, valid) =>
+    Array.isArray(a) && a.length === 4 && a.every(valid);
+  const integer = (n, min, max) =>
+    Number.isInteger(n) && n >= min && n <= max;
+  const tile = (p) => typeof p === "string" && !!M.Shoupai.valid_pai(p);
+  const board = (m) => {
+    if (
+      !m ||
+      !four(m.player, (p) => typeof p === "string") ||
+      !four(m.defen, Number.isFinite) ||
+      !four(m.player_id, (id) => integer(id, 0, 3)) ||
+      new Set(m.player_id).size !== 4 ||
+      !integer(m.lunban, -1, 3) ||
+      !integer(m.zhuangfeng, 0, 3) ||
+      !integer(m.jushu, 0, 15) ||
+      !integer(m.changbang, 0, 10000) ||
+      !integer(m.lizhibang, 0, 10000) ||
+      !four(m.shoupai, (h) =>
+        h instanceof M.Shoupai &&
+        integer(h._bingpai?._, 0, 14) &&
+        ["m", "p", "s", "z"].every((s) =>
+          Array.isArray(h._bingpai?.[s]) &&
+          h._bingpai[s].length === (s === "z" ? 8 : 10) &&
+          h._bingpai[s].every((n) => integer(n, 0, 4)),
+        ) &&
+        Array.isArray(h._fulou) && h._fulou.length <= 4 &&
+        h._fulou.every((meld) => typeof meld === "string" && meld.length <= 6 && M.Shoupai.valid_mianzi(meld)),
+      ) ||
+      !four(m.he, (h) => h instanceof M.He && Array.isArray(h._pai) && h._pai.length <= 136 &&
+        h._pai.every(tile) && h._find && typeof h._find === "object") ||
+      !m.shan || !integer(m.shan.paishu, 0, 122) ||
+      !Array.isArray(m.shan.baopai) || m.shan.baopai.length > 5 || !m.shan.baopai.every(tile)
+    ) throw new Error("保存データが不完全です");
+  };
+  if (
+    !(game instanceof TrainingGame) ||
+    !["qipai", "zimo", "dapai", "fulou", "gang", "gangzimo", "hule", "pingju", "jieju"].includes(game._status) ||
+    !Array.isArray(game._reply) || !Array.isArray(game._paipu?.log) ||
+    !game._rule || typeof game._rule !== "object" ||
+    !four(game._players, (p) => p instanceof TrainingPlayer &&
+      p.model instanceof M.Board && integer(p._menfeng, 0, 3))
+  ) throw new Error("保存データが不完全です");
+  // Bound the private wall directly, before validating derived board fields.
+  if (!(game.model.shan instanceof M.Shan) ||
+      !Array.isArray(game.model.shan._pai) ||
+      !integer(game.model.shan._pai.length, 14, 136) ||
+      !game.model.shan._pai.every(tile))
+    throw new Error("山の保存データが不完全です");
+  board(game.model);
+  for (const player of game._players) board(player.model);
+  if (game._status === "hule" || game._event?.hule) {
+    const h = game._event?.hule;
+    if (!h || typeof h.shoupai !== "string" || h.shoupai.length > 64 ||
+        h.shoupai.split(",").length > 5 || !Number.isFinite(h.defen) ||
+        !integer(h.l, 0, 3) || !four(h.fenpei, Number.isFinite) ||
+        !Array.isArray(h.hupai) || h.hupai.length > 64 || !h.hupai.every((x) => typeof x.name === "string"))
+      throw new Error("和了の保存データが不完全です");
+  }
+  if (game._status === "pingju" &&
+      (!game._event?.pingju || !four(game._event.pingju.fenpei, Number.isFinite)))
+    throw new Error("流局の保存データが不完全です");
+}
+
 export class Session {
   constructor(settings = { ...DEFAULT_SETTINGS }, preset = "normal") {
     this.settings = { ...DEFAULT_SETTINGS, ...settings };
@@ -276,6 +342,7 @@ export class Session {
     this.game = decode(snapshot);
     this.game._callback = EMPTY;
     this.game._sync = true;
+    this.updateSettings({});
   }
   save() {
     return JSON.stringify({
@@ -293,22 +360,63 @@ export class Session {
       throw new Error("保存形式が異なります");
     const session = Object.create(Session.prototype);
     session.settings = { ...DEFAULT_SETTINGS, ...s.settings };
+    if (
+      ![1, 2, 3, 4, 5].includes(session.settings.level) ||
+      !["ask", "always", "off"].includes(session.settings.hints) ||
+      ![250, 850, 1500].includes(session.settings.speed) ||
+      ![1, 2].includes(session.settings.length) ||
+      typeof session.settings.reveal !== "boolean" ||
+      typeof session.settings.wall !== "boolean"
+    ) throw new Error("保存された設定が不正です");
     session.history = [];
     session.reviews = s.reviews || [];
     session.assisted = !!s.assisted;
     session.initial = s.initial;
-    session.restore(s.game);
-    if (
-      session.game.model.shoupai.length !== 4 ||
-      session.game._players.length !== 4
-    )
-      throw new Error("保存データが不完全です");
+    try {
+      validateGame(decode(s.game));
+      const initial = decode(s.initial);
+      validateGame(initial);
+      if (initial._status !== "qipai" || !Array.isArray(session.reviews) ||
+          session.reviews.length > 60 ||
+          !session.reviews.every((r) => r && typeof r.pick === "string" &&
+            M.Shoupai.valid_pai(r.pick) && typeof r.best === "string" &&
+            M.Shoupai.valid_pai(r.best) && Number.isFinite(r.shanten)))
+        throw new Error("保存データが不完全です");
+      session.restore(s.game);
+      session.actions();
+      session.status();
+      session.prompt();
+      candidates(session.me);
+    } catch {
+      throw new Error("保存データが不完全です。元の対局ファイルを選んでください。");
+    }
     return session;
   }
   updateSettings(settings) {
     this.settings = { ...this.settings, ...settings };
-    for (let id = 1; id < 4; id++)
-      this.game._players[id].level = this.settings.level;
+    const g = this.game;
+    for (let id = 1; id < 4; id++) {
+      const player = g._players[id];
+      if (player.level === this.settings.level) continue;
+      player.level = this.settings.level;
+      // Replies are already queued when a snapshot is taken. Reconsider only
+      // decisions, never replay the event that updated the player's board.
+      // Keep wins: Player.dapai marks temporary furiten after choosing a reply.
+      if (g._reply[id]?.hule) continue;
+      const callback = player._callback;
+      player._callback = (reply) => { g._reply[id] = reply || {}; };
+      try {
+        const l = g.model.lunban;
+        if (g._status === "zimo" || g._status === "gangzimo")
+          player.action_zimo({ l }, g._status === "gangzimo");
+        else if (g._status === "dapai")
+          player.action_dapai({ l, p: g._dapai });
+        else if (g._status === "fulou")
+          player.action_fulou(g._event.fulou);
+      } finally {
+        player._callback = callback;
+      }
+    }
   }
   actions() {
     const g = this.game,

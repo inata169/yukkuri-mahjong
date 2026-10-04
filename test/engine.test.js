@@ -109,3 +109,198 @@ test("invalid manual actions are rejected instead of silently discarding a diffe
     s.step({ kind: "discard", reply: { dapai: "not-a-tile" } }),
   );
 });
+
+test("undo and replay retain the currently selected CPU level", () => {
+  const s = new Session({ level: 2 });
+  s.step();
+  s.updateSettings({ level: 5 });
+  assert.ok(s.undo());
+  assert.equal(s.settings.level, 5);
+  assert.deepEqual(s.game._players.slice(1).map((p) => p.level), [5, 5, 5]);
+  s.replay();
+  assert.deepEqual(s.game._players.slice(1).map((p) => p.level), [5, 5, 5]);
+});
+
+test("loading rejects corrupted scores, replay state, settings and reviews", () => {
+  const saved = new Session().save();
+  const corruptions = [
+    (s) => { s.game._model.defen = null; },
+    (s) => { s.game._players[0]._model.shoupai = []; },
+    (s) => { s.initial = {}; },
+    (s) => { s.settings.speed = -1; },
+    (s) => { s.settings.level = 99; },
+    (s) => { s.reviews = {}; },
+    (s) => { s.game._status = "unknown"; },
+    (s) => { s.game._model.player_id = [0, 0, 0, 0]; },
+  ];
+  for (const corrupt of corruptions) {
+    const value = JSON.parse(saved);
+    corrupt(value);
+    assert.throws(() => Session.load(JSON.stringify(value)), /保存/);
+  }
+  assert.equal(Session.load(saved).save(), saved);
+});
+
+test("a saved half match retains rules and can resume and replay", () => {
+  const s = new Session({ length: 2, level: 4, speed: 250 });
+  s.step(s.actions().find((a) => a.kind === "discard"));
+  const loaded = Session.load(s.save());
+  assert.equal(loaded.settings.length, 2);
+  assert.equal(loaded.game._rule["場数"], 2);
+  assert.equal(loaded.reviews.length, 1);
+  loaded.step();
+  loaded.replay();
+  assert.equal(loaded.actions().filter((a) => a.kind === "discard").length > 0, true);
+});
+
+// A fixed wall makes the level 1 / level 5 decision regression reproducible.
+function pendingCpuSession() {
+  const s = new Session({ level: 1 });
+  const wall = new M.Shan(s.game._rule);
+  wall._pai.sort();
+  let seed = 12345;
+  for (let i = wall._pai.length - 1; i > 0; i--) {
+    seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0;
+    const j = seed % (i + 1);
+    [wall._pai[i], wall._pai[j]] = [wall._pai[j], wall._pai[i]];
+  }
+  wall._baopai = [wall._pai[4]];
+  wall._fubaopai = [wall._pai[9]];
+  s.game.qipai(wall);
+  s.initial = s.snapshot();
+  s.step();
+  s.step();
+  s.step();
+  assert.equal(s.game._status, "zimo");
+  assert.equal(s.game.model.player_id[s.game.model.lunban], 1);
+  assert.deepEqual(s.game._reply[1], { dapai: "m2" });
+  return s;
+}
+
+test("level changes update the pending CPU move, including undo and older saves", () => {
+  const s = pendingCpuSession();
+  const oldSave = JSON.parse(s.save());
+  const before = s.snapshot();
+  s.updateSettings({ level: 5 });
+  assert.deepEqual(s.game._reply[1], { dapai: "p9" });
+  assert.deepEqual(s.snapshot()._model, before._model);
+  assert.deepEqual(s.game._reply[0], before._reply[0]);
+
+  const undone = pendingCpuSession();
+  undone.step();
+  undone.updateSettings({ level: 5 });
+  assert.ok(undone.undo());
+  assert.deepEqual(undone.game._reply[1], { dapai: "p9" });
+  assert.deepEqual(undone.snapshot()._model, before._model);
+  undone.step();
+  assert.equal(undone.game.model.he[1]._pai.at(-1), "p9");
+
+  oldSave.settings.level = 5;
+  const loaded = Session.load(JSON.stringify(oldSave));
+  assert.deepEqual(loaded.game._reply[1], { dapai: "p9" });
+  loaded.step();
+  assert.equal(loaded.game.model.he[1]._pai.at(-1), "p9");
+});
+
+test("level changes preserve boards, manual replies and pending wins through a match", () => {
+  const s = pendingCpuSession();
+  let steps = 0, wins = 0;
+  while (!s.finished && steps++ < 4000) {
+    const before = s.snapshot();
+    s.updateSettings({ level: s.settings.level === 1 ? 5 : 1 });
+    const after = s.snapshot();
+    assert.deepEqual(after._model, before._model);
+    assert.deepEqual(after._reply[0], before._reply[0]);
+    for (let id = 1; id < 4; id++) {
+      assert.deepEqual(after._players[id]._model, before._players[id]._model);
+      assert.equal(after._players[id]._neng_rong, before._players[id]._neng_rong);
+      if (before._reply[id].hule) {
+        wins++;
+        assert.deepEqual(after._reply[id], before._reply[id]);
+      }
+    }
+    s.step();
+    assert.equal(physicalTiles(s).length, 136);
+  }
+  assert.ok(s.finished);
+  assert.ok(wins > 0, "the test exercised a pending CPU win");
+});
+
+test("loading rejects unbounded concealed-tile counts in all saved boards", () => {
+  const saved = new Session().save();
+  for (const key of ["game", "initial"]) {
+    for (let board = -1; board < 4; board++) {
+      for (const count of [-1, 1.5, 15, 1000000, null, undefined]) {
+        const data = JSON.parse(saved);
+        const model = board === -1 ? data[key]._model : data[key]._players[board]._model;
+        model.shoupai[1]._bingpai._ = count;
+        assert.throws(() => Session.load(JSON.stringify(data)), /保存/);
+      }
+    }
+  }
+  assert.equal(Session.load(saved).save(), saved);
+});
+
+
+test("loading rejects more than four melds in every live and replay board", () => {
+  const saved = new Session().save();
+  for (const key of ["game", "initial"]) {
+    for (let board = -1; board < 4; board++) {
+      const data = JSON.parse(saved);
+      const model = board === -1 ? data[key]._model : data[key]._players[board]._model;
+      model.shoupai[1]._fulou = Array(5).fill("m111+");
+      assert.throws(() => Session.load(JSON.stringify(data)), /保存/);
+    }
+  }
+});
+
+test("loading bounds collections rendered by the table and review dialog", () => {
+  const saved = new Session().save();
+  const corruptions = [
+    (s) => { s.game._model.he[1]._pai = Array(137).fill("m1"); },
+    (s) => { s.initial._players[2]._model.he[1]._pai = Array(137).fill("m1"); },
+    (s) => { s.game._model.shan._baopai = Array(6).fill("m1"); },
+    (s) => { s.initial._players[2]._model.shan.baopai = Array(6).fill("m1"); },
+    (s) => { s.reviews = Array(61).fill({ pick: "m1", best: "m1", shanten: 1 }); },
+  ];
+  for (const corrupt of corruptions) {
+    const data = JSON.parse(saved);
+    corrupt(data);
+    assert.throws(() => Session.load(JSON.stringify(data)), /保存/);
+  }
+  assert.equal(Session.load(saved).save(), saved);
+});
+
+test("loading bounds the separate winning hand and yaku display", () => {
+  const data = JSON.parse(new Session().save());
+  data.game._status = "hule";
+  data.game._event = { hule: {
+    l: 0, shoupai: "z11,m123-,p123-,s123-,z555+", defen: 1000,
+    fenpei: [1000, -1000, 0, 0], hupai: [{ name: "役牌 白", fanshu: 1 }],
+  } };
+  const saved = JSON.stringify(data);
+  assert.equal(Session.load(saved).game._event.hule.shoupai, data.game._event.hule.shoupai);
+  data.game._event.hule.shoupai += ",m111+";
+  assert.throws(() => Session.load(JSON.stringify(data)), /保存/);
+  const oversized = JSON.parse(saved);
+  oversized.game._event.hule.hupai = Array(65).fill({ name: "役牌 白", fanshu: 1 });
+  assert.throws(() => Session.load(JSON.stringify(oversized)), /保存/);
+});
+
+
+test("loading bounds the private wall in live and replay state", () => {
+  const saved = new Session().save();
+  for (const key of ["game", "initial"]) {
+    for (const count of [0, 13, 137, 100000]) {
+      const data = JSON.parse(saved);
+      data[key]._model.shan._pai = Array(count).fill("m1");
+      assert.throws(() => Session.load(JSON.stringify(data)), /保存/);
+    }
+    for (const count of [14, 136]) {
+      const data = JSON.parse(saved);
+      data[key]._model.shan._pai = Array(count).fill("m1");
+      assert.doesNotThrow(() => Session.load(JSON.stringify(data)));
+    }
+  }
+  assert.equal(Session.load(saved).save(), saved);
+});
