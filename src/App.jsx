@@ -19,6 +19,7 @@ import Modal from "./components/Modal.jsx";
 import Settings from "./components/Settings.jsx";
 import Guide from "./components/Guide.jsx";
 import Tile from "./components/Tile.jsx";
+import Comparison from "./components/Comparison.jsx";
 
 const SAVE_KEY = "yukkuri-mahjong-session-v1";
 function boot() {
@@ -195,6 +196,8 @@ export default function App() {
   const title =
     modal?.type === "settings"
       ? "練習設定"
+      : modal?.type === "comparison"
+        ? "CPUの自動対戦・比較"
       : modal?.type === "guide"
         ? "役の手引き"
         : modal?.type === "prompt"
@@ -219,6 +222,9 @@ export default function App() {
           </div>
         </div>
         <nav aria-label="メニュー">
+          <button className="header-button" onClick={() => setModal({ type: "comparison" })}>
+            CPU比較
+          </button>
           <button
             className="header-button"
             onClick={() => setModal({ type: "guide" })}
@@ -448,6 +454,7 @@ export default function App() {
       </footer>
       {modal ? (
         <Modal title={title} onClose={() => setModal(null)}>
+          {modal.type === "comparison" ? <Comparison /> : null}
           {modal.type === "settings" ? (
             <Settings
               settings={session.settings}

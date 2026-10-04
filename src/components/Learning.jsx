@@ -11,6 +11,7 @@ import {
 import Tile from "./Tile.jsx";
 import { tileName } from "../game/tiles.js";
 import { LEVELS } from "../game/engine.js";
+import { CPU_TYPES } from "../game/strategy.js";
 
 export default function Learning({
   session,
@@ -158,7 +159,7 @@ export default function Learning({
         </small>
       </div>
       <div className="learning-foot">
-        CPU レベル{session.settings.level} ·{" "}
+        {CPU_TYPES[session.settings.cpu]} レベル{session.settings.level} ·{" "}
         {LEVELS[session.settings.level - 1]}
         <br />
         制限時間なし · この端末に自動保存

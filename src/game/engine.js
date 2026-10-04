@@ -1,8 +1,10 @@
 import M from "@kobalab/majiang-core";
 import { candidates, yakuPaths, makePrompt } from "./advice.js";
 import { tileName, meldName, WINDS, parseTiles } from "./tiles.js";
+import { CPU_TYPES, improvedCandidates, chooseImprovedCall } from "./strategy.js";
 
 export const DEFAULT_SETTINGS = {
+  cpu: "improved",
   level: 2,
   hints: "ask",
   reveal: false,
@@ -36,12 +38,13 @@ function hash(text) {
 }
 
 class TrainingPlayer extends M.Player {
-  constructor(level) {
+  constructor(level, cpu = "legacy") {
     super();
     this.level = level;
+    this.cpu = cpu;
   }
   chooseDiscard() {
-    const a = candidates(this, this.level),
+    const a = this.cpu === "improved" ? improvedCandidates(this, this.level) : candidates(this, this.level),
       n = hash(this.shoupai.toString() + this.he._pai.join(""));
     const c = this.level === 1 ? (n % 3 === 0 ? a[n % a.length] : a[0]) : a[0];
     const riichi =
@@ -86,6 +89,11 @@ class TrainingPlayer extends M.Player {
     if (data.l === this._menfeng) return this._callback();
     if (this.canWin(data)) return this._callback({ hule: "-" });
     if (this.level < 3 || this.shoupai.lizhi) return this._callback();
+    if (this.cpu === "improved") {
+      const tile = data.p.slice(0, 2) + "_+=-"[(4 + data.l - this._menfeng) % 4];
+      const meld = chooseImprovedCall(this, tile, this.level);
+      return this._callback(meld ? { fulou: meld } : {});
+    }
     if (
       this.level >= 5 &&
       this.model.shoupai.some((s, i) => i !== this._menfeng && s.lizhi)
@@ -134,11 +142,12 @@ class TrainingPlayer extends M.Player {
 }
 
 class TrainingGame extends M.Game {
-  constructor(settings, preset) {
+  constructor(settings, preset, options = {}) {
     super(
       Array.from(
         { length: 4 },
-        (_, i) => new TrainingPlayer(i === 0 ? 5 : settings.level),
+        (_, i) => new TrainingPlayer(i === 0 && !options.cpuById ? 5 : settings.level,
+          options.cpuById?.[i] || settings.cpu),
       ),
       EMPTY,
       M.rule({ 場数: settings.length, 延長戦方式: 0 }),
@@ -148,6 +157,8 @@ class TrainingGame extends M.Game {
     this._preset = preset;
     this._model.player = ["あなた", "こはる", "あおい", "ひなた"];
     this._event = {};
+    this._seed = options.seed ?? null;
+    this._handNumber = 0;
   }
   call_players(type, msg) {
     this._status = type;
@@ -166,7 +177,21 @@ class TrainingGame extends M.Game {
           : JSON.parse(JSON.stringify(this._paipu.log.at(-1)?.at(-1) || {}));
   }
   qipai(shan) {
-    shan = shan || new M.Shan(this._rule);
+    if (!shan) {
+      shan = new M.Shan(this._rule);
+      if (this._seed != null) {
+        shan._pai.sort();
+        let seed = (this._seed + Math.imul(this._handNumber + 1, 0x9e3779b9)) >>> 0;
+        for (let i = shan._pai.length - 1; i > 0; i--) {
+          seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0;
+          const j = seed % (i + 1);
+          [shan._pai[i], shan._pai[j]] = [shan._pai[j], shan._pai[i]];
+        }
+        shan._baopai = [shan._pai[4]];
+        shan._fubaopai = [shan._pai[9]];
+      }
+    }
+    this._handNumber = (this._handNumber || 0) + 1;
     if (PRESET_HANDS[this._preset]) {
       const target = parseTiles(PRESET_HANDS[this._preset]);
       for (const t of target) {
@@ -312,12 +337,12 @@ function validateGame(game) {
 }
 
 export class Session {
-  constructor(settings = { ...DEFAULT_SETTINGS }, preset = "normal") {
+  constructor(settings = { ...DEFAULT_SETTINGS }, preset = "normal", options = {}) {
     this.settings = { ...DEFAULT_SETTINGS, ...settings };
     this.history = [];
     this.reviews = [];
     this.assisted = false;
-    this.game = new TrainingGame(this.settings, preset);
+    this.game = new TrainingGame(this.settings, preset, options);
     this.game.kaiju(0);
     this.game.reply_kaiju();
     this.initial = this.snapshot();
@@ -359,8 +384,9 @@ export class Session {
     if (s.version !== 1 || s.game?.$type !== "TrainingGame" || !s.initial)
       throw new Error("保存形式が異なります");
     const session = Object.create(Session.prototype);
-    session.settings = { ...DEFAULT_SETTINGS, ...s.settings };
+    session.settings = { ...DEFAULT_SETTINGS, cpu: "legacy", ...s.settings };
     if (
+      !Object.hasOwn(CPU_TYPES, session.settings.cpu) ||
       ![1, 2, 3, 4, 5].includes(session.settings.level) ||
       !["ask", "always", "off"].includes(session.settings.hints) ||
       ![250, 850, 1500].includes(session.settings.speed) ||
@@ -395,10 +421,12 @@ export class Session {
   updateSettings(settings) {
     this.settings = { ...this.settings, ...settings };
     const g = this.game;
-    for (let id = 1; id < 4; id++) {
+    for (let id = 0; id < 4; id++) {
       const player = g._players[id];
-      if (player.level === this.settings.level) continue;
-      player.level = this.settings.level;
+      const level = id === 0 ? 5 : this.settings.level;
+      if (player.level === level && (player.cpu || "legacy") === this.settings.cpu) continue;
+      player.level = level;
+      player.cpu = this.settings.cpu;
       // Replies are already queued when a snapshot is taken. Reconsider only
       // decisions, never replay the event that updated the player's board.
       // Keep wins: Player.dapai marks temporary furiten after choosing a reply.
@@ -479,7 +507,7 @@ export class Session {
     }
     return a;
   }
-  step(action) {
+  step(action, { record = true } = {}) {
     if (this.finished) return;
     const g = this.game,
       legal = this.actions();
@@ -490,12 +518,14 @@ export class Session {
       )
     )
       throw new Error("今はその操作を選べません");
-    this.history.push({
-      game: this.snapshot(),
-      initial: this.initial,
-      reviews: this.reviews.slice(),
-    });
-    if (this.history.length > 24) this.history.shift();
+    if (record) {
+      this.history.push({
+        game: this.snapshot(),
+        initial: this.initial,
+        reviews: this.reviews.slice(),
+      });
+      if (this.history.length > 24) this.history.shift();
+    }
     if (action) {
       if (action.kind === "discard" || action.kind === "riichi") {
         const best = candidates(this.me)[0],
