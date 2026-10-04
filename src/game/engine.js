@@ -290,11 +290,14 @@ function validateGame(game) {
     !four(game._players, (p) => p instanceof TrainingPlayer &&
       p.model instanceof M.Board && integer(p._menfeng, 0, 3))
   ) throw new Error("保存データが不完全です");
+  // Bound the private wall directly, before validating derived board fields.
+  if (!(game.model.shan instanceof M.Shan) ||
+      !Array.isArray(game.model.shan._pai) ||
+      !integer(game.model.shan._pai.length, 14, 136) ||
+      !game.model.shan._pai.every(tile))
+    throw new Error("山の保存データが不完全です");
   board(game.model);
   for (const player of game._players) board(player.model);
-  if (!(game.model.shan instanceof M.Shan) ||
-      !Array.isArray(game.model.shan._pai) || !game.model.shan._pai.every(tile))
-    throw new Error("山の保存データが不完全です");
   if (game._status === "hule" || game._event?.hule) {
     const h = game._event?.hule;
     if (!h || typeof h.shoupai !== "string" || h.shoupai.length > 64 ||

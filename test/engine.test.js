@@ -286,3 +286,21 @@ test("loading bounds the separate winning hand and yaku display", () => {
   oversized.game._event.hule.hupai = Array(65).fill({ name: "役牌 白", fanshu: 1 });
   assert.throws(() => Session.load(JSON.stringify(oversized)), /保存/);
 });
+
+
+test("loading bounds the private wall in live and replay state", () => {
+  const saved = new Session().save();
+  for (const key of ["game", "initial"]) {
+    for (const count of [0, 13, 137, 100000]) {
+      const data = JSON.parse(saved);
+      data[key]._model.shan._pai = Array(count).fill("m1");
+      assert.throws(() => Session.load(JSON.stringify(data)), /保存/);
+    }
+    for (const count of [14, 136]) {
+      const data = JSON.parse(saved);
+      data[key]._model.shan._pai = Array(count).fill("m1");
+      assert.doesNotThrow(() => Session.load(JSON.stringify(data)));
+    }
+  }
+  assert.equal(Session.load(saved).save(), saved);
+});
